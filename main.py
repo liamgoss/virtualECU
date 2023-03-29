@@ -1,9 +1,12 @@
-import can, time, sys, threading
+import can, time, sys, threading, math
 start = time.time()
-#bus = can.interface.Bus(interface='socketcan', channel='vcan1')
-bus = can.interface.Bus(interface='virtual')
+BUS = can.interface.Bus(interface='socketcan', channel='vcan0')
+BUS2 = can.interface.Bus(interface='socketcan', channel='vcan0')
+#bus = can.interface.Bus(interface='virtual')
+#printer = can.Printer()
+#notifier = can.Notiier(bus, [printer])
 
-class ecu:
+class ECU:
 
     TEC = 0
     REC = 0
@@ -23,10 +26,14 @@ When TEC is greater than 255, then the node enters into Bus Off state,
     def __init__(self, arb, msgData=[0, 0, 0, 0, 0, 0, 0, 0]):
         self.arb_id = arb
         self.msg = can.Message(arbitration_id=arb, data=msgData, is_extended_id=False)
-    
-    def transmitPeriodic(self, targetBus=bus, speed=1):
+
+    def transmitPeriodic(self, targetBus=BUS, speed=1):
         def sendMsg(busToUse, speedToUse):
-            busToUse.send(self.msg)
+            try:
+                BUS.send(self.msg)
+                #print(f"Message sent on {BUS.channel_info}")
+            except can.CanError:
+                print("Message NOT sent!")
             threading.Timer(speedToUse, sendMsg, args=[busToUse, speedToUse]).start()
         sendMsg(targetBus, speed)
 
@@ -42,11 +49,11 @@ When TEC is greater than 255, then the node enters into Bus Off state,
     def getMsg(self):
         return self.msg
 
-    def broadcastError(self):
+    def __broadcastError(self):
         print("broadcastError")
-   
 
-    def error(self):
+
+    def __error(self):
         if (self.isTransmitter):
             self.TEC = self.TEC + 8
         else:
@@ -62,14 +69,40 @@ When TEC is greater than 255, then the node enters into Bus Off state,
             sys.exit(11)
 
 
+def busRecv(bus=BUS):
+    def repeat():
+        msgOut = bus.recv()
+        #print(f"msg: {msgOut}")
+        threading.Timer(0.000001, repeat).start()
+        return msgOut
+    return repeat()
+
 if __name__ == "__main__":
-    test = ecu(0x69, [0, 0, 0, 1, 0, 0, 0, 0])
-    
-    test.transmitPeriodic(bus, 1)
+    test = ECU(0x69, [0, 0, 0, 1, 0, 0, 0, 0])
+    test2 = ECU(0x69, [0, 0, 0, 0, 1, 0, 1, 0])
+
+    test.transmitPeriodic(BUS, 0.075)
+    test2.transmitPeriodic(BUS, .000001)
     print("Beginning transmission")
-    for msg in bus:
-        print(msg)
-    
+    pastTimestamp = 0
+    count = 0
+    while True:
+        #print(f"rcvd: {busRecv(BUS2).timestamp}")
+        timestamp = busRecv(BUS2).timestamp
+        #print(round(timestamp, 6), round(pastTimestamp, 6))
+        if math.ceil((timestamp*10000))/10000 == math.ceil((pastTimestamp*10000))/10000:
+            #print("")
+            count = count + 1
+            print(f"\r{count}", end='')
+            #print("\n\nSAME TIME!\n\n")
+            #sys.exit(1)
+        pastTimestamp = timestamp
+        # print(f"\r{timestamp}", end='')
+    #while True:
+    #    busRecv(BUS)
+    #        print(BUS.recv())
+    # listener = can.Listener(bus)
+    # print(listener(msgReceived))
     '''
     bg1 = ecu(0x14, [0xFF, 0xA8, 0x56, 0x13, 0x7C, 0x34, 0x99, 0xBA])
     bg2 = ecu(0x14, [0x01, 0xEE, 0x32, 0xA3, 0xCB, 0x00, 0x91, 0xA4])
