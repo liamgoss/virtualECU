@@ -7,7 +7,7 @@ BUS2 = can.interface.Bus(interface='socketcan', channel='vcan0')
 #notifier = can.Notiier(bus, [printer])
 
 class ECU:
-
+    isTransmitter = False
     TEC = 0
     REC = 0
     # 01 = error active
@@ -28,6 +28,7 @@ When TEC is greater than 255, then the node enters into Bus Off state,
         self.msg = can.Message(arbitration_id=arb, data=msgData, is_extended_id=False)
 
     def transmitPeriodic(self, targetBus=BUS, speed=1):
+        self.isTransmitter = True
         def sendMsg(busToUse, speedToUse):
             try:
                 BUS.send(self.msg)
@@ -52,12 +53,26 @@ When TEC is greater than 255, then the node enters into Bus Off state,
     def __broadcastError(self):
         print("broadcastError")
 
+    def printErrorRegs(self):
+        def repeat():
+            print(f"\rTEC, REC: {self.TEC},{self.REC}", end='')
+            threading.Timer(0.0001, repeat).start()
+        repeat()
 
-    def __error(self):
+    def decrementTEC(self):
+        if self.TEC > 0:
+            self.TEC = self.TEC - 1
+        
+    def decrementREC(self):
+        if self.REC > 0:
+            self.REC = self.REC - 1
+
+    def error(self):
+        #print("error")
         if (self.isTransmitter):
             self.TEC = self.TEC + 8
         else:
-            self.REC = self.REC + 9
+            self.REC = self.REC + 1
 
         if (self.TEC > 127 and self.TEC < 255) or (self.REC > 127 and self.REC < 255):
             self.state = 0b10 # error passive
@@ -67,33 +82,43 @@ When TEC is greater than 255, then the node enters into Bus Off state,
             self.state = 0b11 # bus-off
             print("~~BUS OFF~~")
             sys.exit(11)
-
+   
 
 def busRecv(bus=BUS):
     def repeat():
         msgOut = bus.recv()
+        try:
+            if msgOut.data == victim.getMsg().data:
+                victim.decrementTEC()
+            else:
+                victim.decrementREC()
+        except:
+            pass
         #print(f"msg: {msgOut}")
         threading.Timer(0.000001, repeat).start()
         return msgOut
     return repeat()
 
 if __name__ == "__main__":
-    test = ECU(0x69, [0, 0, 0, 1, 0, 0, 0, 0])
-    test2 = ECU(0x69, [0, 0, 0, 0, 1, 0, 1, 0])
+    victim = ECU(0x70, [0, 0, 0, 1, 0, 0, 0, 0])
+    attacker = ECU(0x70, [0, 0, 0, 0, 1, 0, 1, 0])
 
-    test.transmitPeriodic(BUS, 0.075)
-    test2.transmitPeriodic(BUS, .000001)
-    print("Beginning transmission")
-    pastTimestamp = 0
+    print("Beginning transmission...")
+    victim.transmitPeriodic(BUS, 0.050)
+    victim.printErrorRegs()
+    attacker.transmitPeriodic(BUS, 0.0001)
+    
+    pastTimestamp = -1
     count = 0
     while True:
         #print(f"rcvd: {busRecv(BUS2).timestamp}")
         timestamp = busRecv(BUS2).timestamp
         #print(round(timestamp, 6), round(pastTimestamp, 6))
-        if math.ceil((timestamp*10000))/10000 == math.ceil((pastTimestamp*10000))/10000:
-            #print("")
-            count = count + 1
-            print(f"\r{count}", end='')
+        # print(f"\r{math.ceil((timestamp*1000))/1000}\t{math.ceil((pastTimestamp*1000))/1000}", end='')
+        if math.ceil((timestamp*1000))/1000 == math.ceil((pastTimestamp*1000))/1000:
+            #count = count + 1
+            #print(f"\r{count}", end='')
+            victim.error()
             #print("\n\nSAME TIME!\n\n")
             #sys.exit(1)
         pastTimestamp = timestamp
